@@ -32,3 +32,7 @@ test-results/
 *.sqlite3-shm
 *.sqlite3-journal
 !*.traineddata.gz
+
+# runtime project store (keep the directory, not the saved projects)
+data/projects/*.json
+!data/projects/.gitkeep

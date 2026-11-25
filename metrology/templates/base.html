@@ -1,0 +1,99 @@
+{% macro icon(kind) -%}
+{%- if kind == "error" -%}✕{%- elif kind == "warn" -%}!{%- elif kind == "good" -%}✓{%- else -%}i{%- endif -%}
+{%- endmacro %}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}计量方差工作台{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232a78d6'/><text x='16' y='23' font-size='18' font-family='system-ui' font-weight='700' fill='white' text-anchor='middle'>σ</text></svg>">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <a class="brand" href="{{ url_for('index') }}">
+      <span class="brand-mark">σ</span>
+      <span>计量方差工作台<small>交叉重复设计 · REML 分量估计</small></span>
+    </a>
+    <div class="spacer"></div>
+    {% block topbar_right %}{% endblock %}
+    <button class="btn small" id="theme-toggle" type="button" title="切换明暗主题">◐ <span>主题</span></button>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      {% block sidebar %}
+      <div>
+        <h3>项目</h3>
+        <div class="project-list">
+          {% for p in projects %}
+            <a href="{{ url_for('project', pid=p.id) }}" class="{{ 'active' if active_id is defined and active_id == p.id }}">
+              {{ p.name }}
+              <span class="meta">{{ p.n_rows }} 条 · {{ p.updated[:16].replace('T', ' ') if p.updated else '' }}</span>
+            </a>
+          {% else %}
+            <div class="side-note">还没有项目。新建一个开始。</div>
+          {% endfor %}
+        </div>
+      </div>
+      <form method="post" action="{{ url_for('create') }}">
+        <label class="field"><span class="lbl">新建项目</span>
+          <input type="text" name="name" placeholder="例如：2026 年度游标卡尺比对" required>
+        </label>
+        <button class="btn primary small" type="submit">新建空项目</button>
+      </form>
+      {% endblock %}
+    </aside>
+    <main class="main">
+      {% block main %}{% endblock %}
+      <footer class="foot">
+        估算采用约束 REML：方差分量 ≥ 0，协方差矩阵始终严格正定，不加抖动常数。
+        区间为剖面似然；边界分量为单侧区间。所有结果按项目记录，可追溯到数据指纹。
+      </footer>
+    </main>
+  </div>
+</div>
+<div class="tooltip" id="tooltip" role="status" aria-live="polite"></div>
+<div class="toast" id="toast"></div>
+<script>
+(function () {
+  var root = document.documentElement;
+  var pref = localStorage.getItem("metrology-theme");
+  if (pref) root.setAttribute("data-theme", pref);
+  var btn = document.getElementById("theme-toggle");
+  if (btn) btn.addEventListener("click", function () {
+    var cur = root.getAttribute("data-theme");
+    if (!cur) cur = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    var next = cur === "dark" ? "light" : "dark";
+    root.setAttribute("data-theme", next);
+    localStorage.setItem("metrology-theme", next);
+  });
+})();
+function toast(msg, isErr) {
+  var el = document.getElementById("toast");
+  if (!el) return;
+  el.textContent = msg;
+  el.className = "toast on" + (isErr ? " err" : "");
+  clearTimeout(el._t);
+  el._t = setTimeout(function () { el.className = "toast"; }, 3800);
+}
+(function () {
+  var tip = document.getElementById("tooltip");
+  if (!tip) return;
+  window.showTip = function (evt, html) {
+    tip.innerHTML = html;
+    tip.classList.add("on");
+    var x = evt.clientX + 14, y = evt.clientY + 14;
+    var r = tip.getBoundingClientRect();
+    if (x + r.width > innerWidth - 8) x = evt.clientX - r.width - 12;
+    if (y + r.height > innerHeight - 8) y = evt.clientY - r.height - 12;
+    tip.style.left = Math.max(6, x) + "px";
+    tip.style.top = Math.max(6, y) + "px";
+  };
+  window.hideTip = function () { tip.classList.remove("on"); };
+})();
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

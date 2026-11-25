@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}计量方差工作台{% endblock %}
+{% block topbar_right %}
+  <span class="project-chip">{{ projects|length }} 个项目</span>
+{% endblock %}
+{% block sidebar %}
+<div>
+  <h3>项目</h3>
+  <div class="project-list">
+    {% for p in projects %}
+      <a href="{{ url_for('project', pid=p.id) }}">
+        {{ p.name }}
+        <span class="meta">{{ p.n_rows }} 条 · {{ p.updated[:16].replace('T', ' ') if p.updated else '' }}</span>
+      </a>
+    {% else %}
+      <div class="side-note">还没有项目。</div>
+    {% endfor %}
+  </div>
+</div>
+<form method="post" action="{{ url_for('create') }}">
+  <label class="field"><span class="lbl">新建项目</span>
+    <input type="text" name="name" placeholder="例如：2026 年度游标卡尺比对" required>
+  </label>
+  <button class="btn primary small" type="submit">新建空项目</button>
+</form>
+<hr class="hr">
+<div class="side-note">
+  <b style="color:var(--text-secondary)">从空项目到可追溯结果</b><br>
+  1. 导入 CSV，或选一个虚构重复设计作起点<br>
+  2. 勾选随机项，查看连接图与可分离性<br>
+  3. 拟合 REML 分量，对照平衡设计手算<br>
+  4. 设定预算，比较新增实验室/设备/复测<br>
+  5. 加入一轮模拟测量，核对预测精度<br>
+  6. 全流程事件写入项目审计轨迹
+</div>
+{% endblock %}
+
+{% block main %}
+<div class="page-head">
+  <div class="grow">
+    <h1>把交叉重复设计的误差来源分开</h1>
+    <p>同一产品在多家实验室、多台设备、多个日期重复测量时，实验室、设备、日期与交互项的方差会互相纠缠。
+      本工作台按显式的交叉/嵌套关系估计各来源的方差分量，检查哪些分量根本无法分离，
+      并用当前精度比较下一笔预算的不同花法。</p>
+  </div>
+  <form method="post" action="{{ url_for('create') }}">
+    <button class="btn primary" type="submit">+ 新建空项目</button>
+  </form>
+</div>
+
+<div class="grid-2" style="margin-bottom:16px">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>虚构重复设计（已知真值）</h2>
+      <span class="panel-sub">种子固定，可复现</span>
+    </div>
+    <p class="secondary small" style="margin-bottom:12px">
+      先用已知分量模拟，再拟合，就能核对估计是否落在真值附近、边界分量是否停在 0。
+      选择任一预设新建项目并加载。
+    </p>
+    {% for pr in presets %}
+      <details class="preset" {{ 'open' if loop.first }}>
+        <summary>
+          {{ pr.label }}
+          <span class="tag" style="margin-left:auto">{{ pr.terms|length + 1 }} 个分量</span>
+        </summary>
+        <div class="body">
+          {{ pr.description }}
+          <div class="truth-list">
+            {% for k, v in pr.truth.items() %}
+              <span class="small"><span class="muted">{{ terms[k] if k in terms else '重复测量' }}</span>
+                <b style="font-variant-numeric:tabular-nums">σ² = {{ '%.2f'|format(v) }}</b></span>
+            {% endfor %}
+          </div>
+          <form method="post" action="{{ url_for('create') }}" style="margin-top:10px; display:flex; gap:8px; align-items:end">
+            <input type="hidden" name="name" value="预设 · {{ pr.label }}">
+            <input type="hidden" name="preset" value="{{ pr.id }}">
+            <button class="btn small primary" type="submit">以此新建项目</button>
+            <span class="small muted">加载后自动带入 {{ pr.terms|join(' + ') }} + 残差模型</span>
+          </form>
+        </div>
+      </details>
+    {% endfor %}
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>模型约定</h2></div>
+    <dl class="kv">
+      <dt>实验室</dt><dd>随机主效应，与日期交叉</dd>
+      <dt>设备</dt><dd>嵌套于实验室（lab/device 才是唯一定位）</dd>
+      <dt>日期</dt><dd>随机主效应，可跨实验室</dd>
+      <dt>实验室×日期</dt><dd>交叉交互，可选</dd>
+      <dt>设备×日期</dt><dd>嵌套交互，可选</dd>
+      <dt>残差</dt><dd>同一实验室/设备/日期单元内的重复测量</dd>
+    </dl>
+    <hr class="hr">
+    <h3 style="margin-bottom:6px">为什么不能逐层方差相加</h3>
+    <p class="small secondary" style="margin-bottom:10px">
+      设备嵌套于实验室，设备方差已包含在实验室的重复测量里；日期又跨实验室。
+      若把每层样本方差直接相加，会重复计入实验室/设备共享的成分，并忽略交叉项。
+      必须同时拟合全部随机项，用限制极大似然（REML）联合估计。
+    </p>
+    <h3 style="margin-bottom:6px">非负边界</h3>
+    <p class="small secondary" style="margin:0">
+      方差分量约束在 ≥ 0。越界的分量被压回 0 并报告边界状态（单侧区间），
+      而不是给协方差矩阵加一个大常数来强行求逆——那会悄悄改变模型。
+    </p>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>设计连接图的读法</h2>
+    <span class="panel-sub">实验室与日期为二部图；连通性决定交叉项能否分离</span>
+  </div>
+  <div class="grid-3">
+    <div class="stat">
+      <div class="label">一个连通组</div>
+      <div class="value" style="font-size:17px">交叉项可估</div>
+      <div class="note">所有实验室通过共享日期连在一起，实验室×日期可以估计。</div>
+    </div>
+    <div class="stat">
+      <div class="label">多个连通组</div>
+      <div class="value" style="font-size:17px">组间不可分离</div>
+      <div class="note">组之间没有共享日期或实验室，交互与主效应混在一起，报告而不硬估。</div>
+    </div>
+    <div class="stat">
+      <div class="label">单元内无重复</div>
+      <div class="value" style="font-size:17px">残差不可单独估</div>
+      <div class="note">每个实验室/设备/日期只有一条记录时，残差与最高阶项无法分开。</div>
+    </div>
+  </div>
+</div>
+{% endblock %}

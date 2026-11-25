@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} · 计量方差工作台{% endblock %}
+{% block topbar_right %}
+  <span class="project-chip"><span class="dot" style="background:var(--series-1)"></span>{{ project.name }}</span>
+{% endblock %}
+{% block sidebar %}
+<form method="post" action="{{ url_for('create') }}" style="margin-bottom:4px">
+  <label class="field"><span class="lbl">新建另一个项目</span>
+    <input type="text" name="name" placeholder="项目名称" required>
+  </label>
+  <button class="btn small" type="submit">新建</button>
+</form>
+<hr class="hr">
+<div class="side-note" id="side-trace"></div>
+<hr class="hr">
+<form method="post" action="{{ url_for('remove', pid=project.id) }}"
+      onsubmit="return confirm('删除该项目及其全部审计记录？此操作不可撤销。')">
+  <button class="btn small" type="submit" style="color:var(--bad-text)">删除项目</button>
+</form>
+{% endblock %}
+
+{% block main %}
+<div class="page-head">
+  <div class="grow">
+    <h1>{{ project.name }}</h1>
+    <p id="project-sub">从空项目开始：导入设计 → 检查可分离性 → 拟合 → 预算 → 验证 → 追溯。</p>
+  </div>
+  <div class="btn-row">
+    <a class="btn small" href="{{ url_for('export_csv', pid=project.id) }}">导出 CSV</a>
+    <a class="btn small" href="{{ url_for('export_json', pid=project.id) }}">导出项目 JSON</a>
+    <a class="btn small" href="{{ url_for('project', pid=project.id) }}#trace">审计轨迹</a>
+  </div>
+</div>
+
+<div class="tabs" role="tablist">
+  <button role="tab" data-tab="design" class="active">1 · 设计</button>
+  <button role="tab" data-tab="fit">2 · 拟合</button>
+  <button role="tab" data-tab="budget">3 · 预算</button>
+  <button role="tab" data-tab="validate">4 · 验证</button>
+  <button role="tab" data-tab="trace">5 · 追溯</button>
+</div>
+
+<!-- ============================ DESIGN ============================ -->
+<section id="tab-design" class="tab-panel">
+  <div class="grid-2">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>导入或生成设计</h2>
+        <span class="panel-sub">CSV 列：lab, device, date, value（也接受中文表头）</span>
+      </div>
+      <textarea id="csv-input" spellcheck="false" placeholder="lab,device,date,value
+L01,LAB01-D1,2026-03-02,50.12
+L01,LAB01-D1,2026-03-02,50.31
+L02,LAB02-D1,2026-03-03,49.87
+..."></textarea>
+      <div class="btn-row" style="margin-top:10px">
+        <button class="btn primary" id="btn-load-csv">使用粘贴的 CSV</button>
+        <label class="btn" style="cursor:pointer">
+          选择 CSV 文件<input type="file" id="file-input" accept=".csv,text/csv" hidden>
+        </label>
+        <span class="small muted" id="csv-hint"></span>
+      </div>
+      <div class="hr"></div>
+      <div class="panel-head" style="margin-bottom:8px"><h3>从虚构预设模拟</h3></div>
+      <div class="inline-2">
+        <label class="field"><span class="lbl">预设</span>
+          <select id="preset-select">
+            {% for pr in presets %}
+              <option value="{{ pr.id }}">{{ pr.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="field"><span class="lbl">随机种子</span>
+          <input type="number" id="preset-seed" value="20261125" step="1">
+        </label>
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="btn-preset">生成并载入</button>
+        <button class="btn ghost" id="btn-demo">一键演示全流程</button>
+      </div>
+      <div class="small muted" id="truth-note" style="margin-top:8px"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>模型结构</h2></div>
+      <p class="small secondary" style="margin-bottom:10px">
+        勾选要同时估计的随机项。设备始终嵌套于实验室；日期与实验室交叉。
+      </p>
+      <div class="checks" id="term-checks">
+        {% for t in term_order %}
+          <label class="check" data-term="{{ t }}">
+            <input type="checkbox" value="{{ t }}" {{ 'checked' if t in project.terms }}>
+            {{ term_labels[t] }}
+          </label>
+        {% endfor %}
+      </div>
+      <hr class="hr">
+      <div id="design-summary"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>设计连接图</h2>
+      <span class="panel-sub" id="graph-sub">左侧实验室、右侧日期；边宽表示测量条数</span>
+    </div>
+    <div id="design-graph"></div>
+    <div class="legend">
+      <span class="item"><span class="dot" style="background:var(--series-1)"></span>实验室</span>
+      <span class="item"><span class="dot" style="background:var(--series-3)"></span>日期</span>
+      <span class="item"><span class="dot" style="background:var(--series-2)"></span>互不连通组</span>
+      <span class="item muted">边宽 ∝ 该实验室–日期组合的测量条数；悬停看设备数</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>可分离性诊断</h2>
+      <span class="panel-sub">错误会阻止拟合；警告提示局部混杂</span>
+    </div>
+    <div id="diagnostics"></div>
+  </div>
+</section>
+
+<!-- ============================ FIT ============================ -->
+<section id="tab-fit" class="tab-panel" hidden>
+  <div class="panel">
+    <div class="panel-head">
+      <h2>约束 REML 分量估计</h2>
+      <div class="btn-row" style="margin-left:auto">
+        <label class="small muted" style="display:inline-flex;align-items:center;gap:6px">
+          区间置信水平
+          <select id="fit-level" style="width:auto">
+            <option value="0.90">90%</option>
+            <option value="0.95" selected>95%</option>
+            <option value="0.99">99%</option>
+          </select>
+        </label>
+        <button class="btn primary" id="btn-fit">拟合</button>
+      </div>
+    </div>
+    <div id="fit-result">
+      <div class="empty"><b>尚未拟合</b>先在设计页载入数据，再点“拟合”。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ BUDGET ============================ -->
+<section id="tab-budget" class="tab-panel" hidden>
+  <div class="panel">
+    <div class="panel-head">
+      <h2>下一笔预算怎样花</h2>
+      <span class="panel-sub">按目标精度比较新增实验室、设备、复测；已有测量成本不计入可支配预算</span>
+    </div>
+    <div class="inline-3" id="budget-inputs">
+      <label class="field"><span class="lbl">本轮新增预算</span><input type="number" id="budget-value" min="0" step="50"></label>
+      <label class="field"><span class="lbl">目标精度（均值标准误上限）</span><input type="number" id="target-sd" min="0" step="0.05" placeholder="留空＝只比较，不设目标"></label>
+      <label class="field"><span class="lbl">新增 1 家实验室（含首台设备）</span><input type="number" id="cost-lab" min="0" step="50"></label>
+      <label class="field"><span class="lbl">新增 1 台设备</span><input type="number" id="cost-device" min="0" step="10"></label>
+      <label class="field"><span class="lbl">新增 1 条测量</span><input type="number" id="cost-repeat" min="0" step="5"></label>
+    </div>
+    <div class="btn-row">
+      <button class="btn primary" id="btn-budget">计算情景</button>
+      <span class="small muted">资产：当前精度由已拟合分量决定；预算只购买未来的测量。</span>
+    </div>
+    <div id="budget-result" style="margin-top:14px"></div>
+  </div>
+</section>
+
+<!-- ============================ VALIDATE ============================ -->
+<section id="tab-validate" class="tab-panel" hidden>
+  <div class="panel">
+    <div class="panel-head">
+      <h2>加入一轮测量验证预期</h2>
+      <span class="panel-sub">按拟合分量模拟一轮新测量 → 重新拟合 → 对比预测与实测精度</span>
+    </div>
+    <div class="inline-3">
+      <label class="field"><span class="lbl">新增实验室</span><input type="number" id="val-labs" min="0" value="1" step="1"></label>
+      <label class="field"><span class="lbl">每个实验室新增设备</span><input type="number" id="val-devices" min="0" value="0" step="1"></label>
+      <label class="field"><span class="lbl">每个单元新增复测</span><input type="number" id="val-reps" min="0" value="2" step="1"></label>
+    </div>
+    <div class="inline-3">
+      <label class="field"><span class="lbl">新增日期</span><input type="number" id="val-dates" min="0" value="0" step="1"></label>
+      <label class="field"><span class="lbl">模拟轮数</span><input type="number" id="val-sims" min="1" max="200" value="24" step="1"></label>
+      <label class="field"><span class="lbl">随机种子</span><input type="number" id="val-seed" value="20261125" step="1"></label>
+    </div>
+    <div class="btn-row">
+      <button class="btn primary" id="btn-validate">运行验证轮</button>
+      <button class="btn ghost" id="btn-adopt-plan">载入预算最优方案</button>
+    </div>
+    <div id="validate-result" style="margin-top:14px"></div>
+  </div>
+</section>
+
+<!-- ============================ TRACE ============================ -->
+<section id="tab-trace" class="tab-panel" hidden>
+  <div class="grid-2">
+    <div class="panel">
+      <div class="panel-head"><h2>审计轨迹</h2><span class="panel-sub">按发生顺序追加，不可编辑</span></div>
+      <div id="trace-list"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>数据与当前结果</h2></div>
+      <div id="trace-meta"></div>
+      <hr class="hr">
+      <h3 style="margin-bottom:8px">手算核对</h3>
+      <div id="hand-check"></div>
+    </div>
+  </div>
+</section>
+
+<div class="analysis-strip panel" id="status-strip" style="margin-top:4px">
+  <span>数据指纹 <b id="fp">—</b></span>
+  <span>记录 <b id="n-rows">—</b></span>
+  <span>测量单元 <b id="n-cells">—</b></span>
+  <span>实验室 <b id="n-labs">—</b></span>
+  <span>设备 <b id="n-devices">—</b></span>
+  <span>日期 <b id="n-dates">—</b></span>
+  <span id="sep-strip"></span>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+window.PROJECT = {
+  id: {{ project.id|tojson }},
+  name: {{ project.name|tojson }},
+  settings: {{ project.settings|tojson }},
+  source: {{ project.source|tojson }},
+  terms: {{ project.terms|tojson }},
+  termLabels: {{ term_labels|tojson }},
+  termOrder: {{ term_order|tojson }}
+};
+</script>
+<script src="{{ url_for('static', filename='charts.js') }}"></script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% endblock %}

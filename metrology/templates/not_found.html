@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}未找到 · 计量方差工作台{% endblock %}
+{% block main %}
+<div class="panel">
+  <h1>找不到这个项目</h1>
+  <p class="secondary">链接可能已过期，或项目已被删除。</p>
+  <a class="btn" href="{{ url_for('index') }}">返回项目列表</a>
+</div>
+{% endblock %}
